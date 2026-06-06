@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Queens – 2 spillere</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --accent: #f59e0b;
+    --danger: #ef4444;
+    --ok: #22c55e;
+    --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  .sub { color: var(--muted); margin-bottom: 20px; font-size: 14px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    width: 100%;
+    max-width: 520px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, button {
+    font-size: 14px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #0f172a;
+    color: var(--text);
+  }
+  button {
+    background: var(--accent);
+    color: #1e293b;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:hover { opacity: 0.9; }
+  button.secondary { background: var(--border); color: var(--text); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: min(90vw, 480px);
+    aspect-ratio: 1;
+    border: 3px solid #000;
+    border-radius: 4px;
+    user-select: none;
+  }
+  .cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    border: 1px solid rgba(0,0,0,0.5);
+    cursor: pointer;
+    aspect-ratio: 1;
+  }
+  .cell.invalid { box-shadow: inset 0 0 0 3px var(--danger); }
+  .status { font-size: 14px; color: var(--muted); }
+  .status strong { color: var(--text); }
+  .hidden { display: none; }
+  .badge {
+    display: inline-block;
+    background: #000;
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 18px;
+    letter-spacing: 2px;
+    margin-left: 6px;
+  }
+  .winner { color: var(--ok); font-weight: 700; font-size: 18px; }
+  .loser { color: var(--danger); font-weight: 700; font-size: 18px; }
+  .rules { font-size: 12px; color: var(--muted); line-height: 1.5; }
+</style>
+</head>
+<body>
+  <h1>👑 Queens – 2 spillere</h1>
+  <div class="sub">Først til å løse vinner. Inspirert av LinkedIn Queens.</div>
+
+  <!-- LOBBY -->
+  <div id="lobby" class="panel">
+    <div class="row" style="margin-bottom:12px">
+      <button id="createBtn">Lag nytt rom</button>
+      <span class="status">eller</span>
+      <input id="joinCode" placeholder="ROMKODE" maxlength="4" style="text-transform:uppercase;width:120px" />
+      <button id="joinBtn" class="secondary">Bli med</button>
+    </div>
+    <div id="lobbyStatus" class="status"></div>
+  </div>
+
+  <!-- GAME -->
+  <div id="game" class="panel hidden">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <div class="status">Rom <span id="roomCode" class="badge"></span></div>
+      <div class="status">Du er <strong id="meLabel">–</strong></div>
+    </div>
+    <div class="status" id="gameStatus" style="margin-bottom:10px">Venter på motstander…</div>
+    <div id="board"></div>
+    <div class="row" style="margin-top:12px;justify-content:space-between">
+      <div class="status">Tid: <strong id="timer">0.0s</strong></div>
+      <button id="newRoundBtn" class="secondary hidden">Ny runde</button>
+    </div>
+    <div id="result" style="margin-top:10px"></div>
+    <p class="rules" style="margin-top:14px">
+      Regler: plasser nøyaktig 1 👑 i hver rad, hver kolonne og hver fargeregion.
+      To dronninger kan ikke stå diagonalt ved siden av hverandre.
+      Klikk celle: tom → ✕ (markør) → 👑 → tom.
+    </p>
+  </div>
+
+  <!-- KONFIG-VARSEL -->
+  <div id="configWarn" class="panel hidden" style="border-color:var(--danger)">
+    <strong style="color:var(--danger)">Firebase mangler!</strong>
+    <p class="rules">
+      Åpne <code>index.html</code> i VS Code og lim inn ditt eget
+      <code>firebaseConfig</code>-objekt der det står
+      <code>// LIM INN FIREBASE CONFIG HER</code>.
+      Se kommentarene nederst i fila for steg-for-steg instruksjoner.
+    </p>
+  </div>
+
+<!-- ============================================================= -->
+<!-- 1) FIREBASE SDK fra CDN (compat-versjon, fungerer uten build) -->
+<!-- ============================================================= -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+// ============================================================
+// 2) LIM INN FIREBASE CONFIG HER
+// ------------------------------------------------------------
+// Hvordan:
+//   a) Gå til https://console.firebase.google.com og lag nytt prosjekt
+//   b) I prosjektet: Build → Realtime Database → Create database
+//      (velg "Start in test mode" – ok for å komme i gang)
+//   c) Project settings (tannhjul) → "Your apps" → </> Web →
+//      registrer app → kopier firebaseConfig-objektet hit under
+//   d) Lagre, push til GitHub, aktiver GitHub Pages
+// ============================================================
+
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBUrv1a7tzAIax6xQ9azhWGCV-UeC2jmM4",
+  authDomain: "qeensmultiplayer.firebaseapp.com",
+  databaseURL: "https://qeensmultiplayer-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "qeensmultiplayer",
+  storageBucket: "qeensmultiplayer.firebasestorage.app",
+  messagingSenderId: "896256745180",
+  appId: "1:896256745180:web:7395bfaf4f6f9d8c159e19",
+  measurementId: "G-0H75PKLXYD"
+};
+
+// ----- Sjekk at config er fylt ut -----
+const configured = firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("DIN_");
+if (!configured) {
+  document.getElementById("lobby").classList.add("hidden");
+  document.getElementById("configWarn").classList.remove("hidden");
+}
+
+let db = null;
+if (configured) {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+}
+
+// ============================================================
+// 3) SPILLOGIKK – Queens 8x8
+// ============================================================
+const SIZE = 8;
+const COLORS = ["#fca5a5","#fdba74","#fde047","#86efac","#67e8f9","#93c5fd","#c4b5fd","#f9a8d4"];
+
+// Seedet random (mulberry32) slik at begge spillere får identisk brett
+function rng(seed) {
+  return function() {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function shuffle(arr, rand) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Generer gyldig dronningplassering (én per rad+kolonne, ikke diagonal-nabo)
+function generateQueens(rand) {
+  const cols = Array.from({length: SIZE}, (_, i) => i);
+  for (let attempt = 0; attempt < 500; attempt++) {
+    shuffle(cols, rand);
+    let ok = true;
+    for (let r = 1; r < SIZE; r++) {
+      if (Math.abs(cols[r] - cols[r-1]) === 1) { ok = false; break; }
+    }
+    if (ok) return cols.map((c, r) => [r, c]);
+  }
+  // fallback (sjelden)
+  return cols.map((c, r) => [r, c]);
+}
+
+// Lag fargeregioner ved å vokse fra hver dronning (BFS-runder)
+function generateRegions(queens, rand) {
+  const grid = Array.from({length: SIZE}, () => Array(SIZE).fill(-1));
+  queens.forEach(([r,c], i) => { grid[r][c] = i; });
+  const frontiers = queens.map(([r,c]) => [[r,c]]);
+  let remaining = SIZE*SIZE - SIZE;
+  while (remaining > 0) {
+    const order = shuffle([...Array(SIZE).keys()], rand);
+    let progressed = false;
+    for (const i of order) {
+      const f = frontiers[i];
+      const next = [];
+      shuffle(f, rand);
+      for (const [r,c] of f) {
+        for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+          const nr = r+dr, nc = c+dc;
+          if (nr<0||nr>=SIZE||nc<0||nc>=SIZE) continue;
+          if (grid[nr][nc] === -1) {
+            grid[nr][nc] = i;
+            next.push([nr,nc]);
+            remaining--;
+            progressed = true;
+            break;
+          }
+        }
+        if (next.length > 0) break;
+      }
+      frontiers[i] = [...f, ...next];
+    }
+    if (!progressed) {
+      // fyll resterende vilkårlig
+      for (let r=0;r<SIZE;r++) for (let c=0;c<SIZE;c++) {
+        if (grid[r][c]===-1) {
+          for (const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+            const nr=r+dr,nc=c+dc;
+            if (nr>=0&&nr<SIZE&&nc>=0&&nc<SIZE&&grid[nr][nc]!==-1) {
+              grid[r][c]=grid[nr][nc]; remaining--; break;
+            }
+          }
+        }
+      }
+      break;
+    }
+  }
+  return grid;
+}
+
+function buildPuzzle(seed) {
+  const rand = rng(seed);
+  const queens = generateQueens(rand);
+  const regions = generateRegions(queens, rand);
+  return { regions };
+}
+
+// Sjekk om brettet er løst
+// state: 0=tom, 1=markør, 2=dronning
+function validate(state, regions) {
+  const queens = [];
+  for (let r=0;r<SIZE;r++) for (let c=0;c<SIZE;c++) {
+    if (state[r][c]===2) queens.push([r,c]);
+  }
+  if (queens.length !== SIZE) return false;
+  const rows=new Set(), cols=new Set(), regs=new Set();
+  for (const [r,c] of queens) {
+    if (rows.has(r)||cols.has(c)) return false;
+    rows.add(r); cols.add(c);
+    const reg = regions[r][c];
+    if (regs.has(reg)) return false;
+    regs.add(reg);
+  }
+  // diagonal nabo-sjekk
+  for (let i=0;i<queens.length;i++) for (let j=i+1;j<queens.length;j++) {
+    const [r1,c1]=queens[i],[r2,c2]=queens[j];
+    if (Math.abs(r1-r2)===1 && Math.abs(c1-c2)===1) return false;
+  }
+  return true;
+}
+
+// ============================================================
+// 4) UI + MULTIPLAYER STATE
+// ============================================================
+let me = null;       // "p1" | "p2"
+let roomCode = null;
+let roomRef = null;
+let puzzle = null;
+let state = null;    // 8x8 0/1/2
+let startTime = null;
+let timerId = null;
+let finished = false;
+
+const boardEl = document.getElementById("board");
+
+function renderBoard() {
+  boardEl.innerHTML = "";
+  for (let r=0;r<SIZE;r++) for (let c=0;c<SIZE;c++) {
+    const cell = document.createElement("div");
+    cell.className = "cell";
+    cell.style.background = COLORS[puzzle.regions[r][c]];
+    cell.style.color = "#111";
+    const v = state[r][c];
+    cell.textContent = v===1 ? "✕" : v===2 ? "👑" : "";
+    cell.onclick = () => {
+      if (finished) return;
+      state[r][c] = (state[r][c]+1) % 3;
+      renderBoard();
+      onMyMove();
+    };
+    boardEl.appendChild(cell);
+  }
+}
+
+function queenCount() {
+  let n=0;
+  for (let r=0;r<SIZE;r++) for (let c=0;c<SIZE;c++) if (state[r][c]===2) n++;
+  return n;
+}
+
+function onMyMove() {
+  if (!roomRef) return;
+  roomRef.child("players/"+me+"/queens").set(queenCount());
+  if (validate(state, puzzle.regions)) {
+    roomRef.child("winner").transaction(curr => curr === null ? me : curr);
+  }
+}
+
+function startGame(seed) {
+  puzzle = buildPuzzle(seed);
+  state = Array.from({length:SIZE}, () => Array(SIZE).fill(0));
+  finished = false;
+  startTime = Date.now();
+  document.getElementById("result").innerHTML = "";
+  document.getElementById("newRoundBtn").classList.add("hidden");
+  renderBoard();
+  if (timerId) clearInterval(timerId);
+  timerId = setInterval(() => {
+    document.getElementById("timer").textContent =
+      ((Date.now()-startTime)/1000).toFixed(1) + "s";
+  }, 100);
+}
+
+function showResult(winner) {
+  finished = true;
+  if (timerId) { clearInterval(timerId); timerId = null; }
+  const el = document.getElementById("result");
+  if (winner === me) {
+    el.innerHTML = '<div class="winner">🎉 Du vant!</div>';
+  } else {
+    el.innerHTML = '<div class="loser">Motstander vant 😢</div>';
+  }
+  // bare p1 kan starte ny runde for å unngå konflikt
+  if (me === "p1") document.getElementById("newRoundBtn").classList.remove("hidden");
+}
+
+function attachRoom(code) {
+  roomCode = code;
+  roomRef = db.ref("rooms/"+code);
+  document.getElementById("roomCode").textContent = code;
+  document.getElementById("meLabel").textContent = me === "p1" ? "Spiller 1" : "Spiller 2";
+  document.getElementById("lobby").classList.add("hidden");
+  document.getElementById("game").classList.remove("hidden");
+
+  roomRef.on("value", snap => {
+    const data = snap.val();
+    if (!data) return;
+    const p1 = data.players?.p1;
+    const p2 = data.players?.p2;
+    const both = p1?.joined && p2?.joined;
+    const status = document.getElementById("gameStatus");
+    if (!both) {
+      status.innerHTML = "Venter på motstander… del koden <strong>"+code+"</strong>";
+      return;
+    }
+    // start når begge er inne (eller ved ny runde)
+    const expectedSeed = data.seed;
+    if (!puzzle || puzzle._seed !== expectedSeed) {
+      startGame(expectedSeed);
+      puzzle._seed = expectedSeed;
+    }
+    const otherKey = me === "p1" ? "p2" : "p1";
+    const otherQ = data.players?.[otherKey]?.queens ?? 0;
+    status.innerHTML = "Motstander har plassert <strong>"+otherQ+"/8</strong> dronninger";
+    if (data.winner && !finished) showResult(data.winner);
+  });
+
+  // online-tracking: marker som "joined: false" når man kobler fra
+  roomRef.child("players/"+me).onDisconnect().update({ joined: false });
+}
+
+// ----- KNAPPER -----
+document.getElementById("createBtn").onclick = async () => {
+  if (!db) return;
+  const code = Math.random().toString(36).slice(2,6).toUpperCase();
+  const seed = Math.floor(Math.random()*1e9);
+  me = "p1";
+  await db.ref("rooms/"+code).set({
+    seed, winner: null, round: 1,
+    players: { p1: { joined: true, queens: 0 }, p2: { joined: false, queens: 0 } }
+  });
+  attachRoom(code);
+};
+
+document.getElementById("joinBtn").onclick = async () => {
+  if (!db) return;
+  const code = document.getElementById("joinCode").value.trim().toUpperCase();
+  if (code.length !== 4) {
+    document.getElementById("lobbyStatus").textContent = "Romkode må være 4 tegn.";
+    return;
+  }
+  const snap = await db.ref("rooms/"+code).get();
+  if (!snap.exists()) {
+    document.getElementById("lobbyStatus").textContent = "Fant ikke rom "+code;
+    return;
+  }
+  me = "p2";
+  await db.ref("rooms/"+code+"/players/p2").update({ joined: true, queens: 0 });
+  attachRoom(code);
+};
+
+document.getElementById("newRoundBtn").onclick = async () => {
+  if (!roomRef || me !== "p1") return;
+  const newSeed = Math.floor(Math.random()*1e9);
+  await roomRef.update({
+    seed: newSeed,
+    winner: null,
+    "players/p1/queens": 0,
+    "players/p2/queens": 0
+  });
+};
+</script>
+
+<!--
+============================================================
+EKSTRA: ANBEFALTE FIREBASE-REGLER (valgfritt – senere)
+============================================================
+Når du er klar til å stramme inn fra "test mode", lim disse inn
+under Realtime Database → Rules:
+
+{
+  "rules": {
+    "rooms": {
+      "$code": {
+        ".read": true,
+        ".write": true,
+        ".validate": "$code.length == 4"
+      }
+    }
+  }
+}
+
+For ekte produksjon bør du legge til Firebase Auth (anonym innlogging)
+og knytte skriverettigheter til auth.uid – men for vennespill holder
+det fint med reglene over.
+============================================================
+-->
+</body>
+</html>
